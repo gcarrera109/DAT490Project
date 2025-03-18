@@ -1,0 +1,684 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "5d9eb1aa-9b9c-43d0-8a1e-9cb03ea08203",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# STOCK DATA\n",
+    "# ~~~~~~~~~~~\n",
+    "\n",
+    "# libaries\n",
+    "import pandas as pd\n",
+    "import yfinance as yf\n",
+    "import numpy as np\n",
+    "from datetime import timedelta\n",
+    "import time\n",
+    "import gc\n",
+    "from tqdm import tqdm\n",
+    "\n",
+    "# pandas read.html to gather stock tickers from S&P500 Wiki page\n",
+    "def sp500_tickers():\n",
+    "    url = \"https://en.wikipedia.org/wiki/List_of_S%26P_500_companies\"\n",
+    "    try:\n",
+    "        table = pd.read_html(url)[0]\n",
+    "        tickers = table[\"Symbol\"].tolist()\n",
+    "        print(f\"{len(tickers)} tickers gathered from S&P500 Wiki page.\")\n",
+    "        \n",
+    "        return tickers\n",
+    "    # error msg    \n",
+    "    except Exception as e:\n",
+    "        print(f\"ERROR: {e}\")\n",
+    "        \n",
+    "        return []"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "87943829-849a-4120-915b-a8d00e824a3a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Using yfinance to gather historical stock market data over 10 years for each ticker\n",
+    "def get_stock_data(tickers):\n",
+    "    try:\n",
+    "        stock_data = yf.download(tickers, period=\"10y\", interval=\"1d\", group_by=\"ticker\", progress=False)\n",
+    "        print(f\"Data gathered for all stocks: {len(tickers)}.\")\n",
+    "        \n",
+    "        return stock_data\n",
+    "    # error msg    \n",
+    "    except Exception as e:\n",
+    "        print(f\"ERROR for: {tickers}: {e}\")\n",
+    "        \n",
+    "        return None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "811465d2-6dc0-4ee4-8a69-936cf0ed5cba",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Using stock_data to create a full historical dataframe all_stock_data, and copy it to avoid SettingWithCopyWarning\n",
+    "def process_data(stock_data, tickers):\n",
+    "    all_stock_data = []\n",
+    "    \n",
+    "    for ticker in tickers:\n",
+    "        \n",
+    "        if ticker in stock_data:\n",
+    "            ticker_data = stock_data[ticker].copy()  \n",
+    "            # add \"Return\", \"Volatility\", \"Ticker\", and drop nulls\n",
+    "            ticker_data.loc[:, \"Return\"] = ticker_data[\"Close\"].pct_change()\n",
+    "            ticker_data.loc[:, \"Volatility\"] = ticker_data[\"Return\"].rolling(window=30).std()\n",
+    "            ticker_data.loc[:, \"Ticker\"] = ticker\n",
+    "            ticker_data = ticker_data.dropna().reset_index()  \n",
+    "            all_stock_data.append(ticker_data)\n",
+    "            \n",
+    "    return pd.concat(all_stock_data, ignore_index=True)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "6e505eac-e714-47ab-919c-13f463816cb4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Collecting data for each ticker in all_stock_data\n",
+    "# avoiding crash/timeout using batches\n",
+    "def batch_collect(tickers, batch_size=50):\n",
+    "    all_stock_data = []\n",
+    "    \n",
+    "    for i in tqdm(range(0, len(tickers), batch_size), desc=\"Fetching data...\"):\n",
+    "        batch_tickers = tickers[i:i + batch_size]\n",
+    "        stock_data = get_stock_data(batch_tickers)\n",
+    "        \n",
+    "        if stock_data is not None:\n",
+    "            all_stock_data.append(process_data(stock_data, batch_tickers))\n",
+    "        gc.collect() # clear memory using garbage collection (gc)\n",
+    "\n",
+    "    return pd.concat(all_stock_data, ignore_index=True)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "61baf5ff-3edd-435e-8159-4cca3124518d",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "503 tickers gathered from S&P500 Wiki page.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...:   0%|          | 0/11 [00:00<?, ?it/s]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "YF.download() has changed argument auto_adjust default to True\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...:   9%|▉         | 1/11 [00:02<00:21,  2.16s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 50.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "\n",
+      "2 Failed downloads:\n",
+      "['BRK.B']: YFPricesMissingError('possibly delisted; no price data found  (period=10y) (Yahoo error = \"No data found, symbol may be delisted\")')\n",
+      "['BF.B']: YFPricesMissingError('possibly delisted; no price data found  (period=10y)')\n",
+      "C:\\Users\\Garrett\\AppData\\Local\\Temp\\ipykernel_17032\\1434117786.py:10: FutureWarning: The default fill_method='pad' in Series.pct_change is deprecated and will be removed in a future version. Either fill in any non-leading NA values prior to calling pct_change or specify 'fill_method=None' to not fill NA values.\n",
+      "  ticker_data.loc[:, \"Return\"] = ticker_data[\"Close\"].pct_change()\n",
+      "C:\\Users\\Garrett\\AppData\\Local\\Temp\\ipykernel_17032\\1434117786.py:10: FutureWarning: The default fill_method='pad' in Series.pct_change is deprecated and will be removed in a future version. Either fill in any non-leading NA values prior to calling pct_change or specify 'fill_method=None' to not fill NA values.\n",
+      "  ticker_data.loc[:, \"Return\"] = ticker_data[\"Close\"].pct_change()\n",
+      "Fetching data...:  18%|█▊        | 2/11 [00:05<00:25,  2.88s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 50.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...:  27%|██▋       | 3/11 [00:07<00:18,  2.31s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 50.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...:  36%|███▋      | 4/11 [00:08<00:14,  2.03s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 50.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...:  45%|████▌     | 5/11 [00:10<00:11,  1.87s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 50.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...:  55%|█████▍    | 6/11 [00:11<00:08,  1.79s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 50.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...:  64%|██████▎   | 7/11 [00:13<00:07,  1.75s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 50.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...:  73%|███████▎  | 8/11 [00:15<00:05,  1.76s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 50.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...:  82%|████████▏ | 9/11 [00:17<00:03,  1.72s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 50.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...:  91%|█████████ | 10/11 [00:18<00:01,  1.68s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 50.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Fetching data...: 100%|██████████| 11/11 [00:18<00:00,  1.73s/it]"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data gathered for all stocks: 3.\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Stock data records: 1213060 saved.\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Gather S&P 500 tickers and save the full data (df_stocks is the base dataframe, saved as full_stock_data.csv)\n",
+    "tickers = sp500_tickers()\n",
+    "df_stocks = batch_collect(tickers, batch_size=50)\n",
+    "\n",
+    "df_stocks.to_csv(\"full_stock_data.csv\", index=False)\n",
+    "print(f\"Stock data records: {df_stocks.shape[0]} saved.\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "id": "d3487af7-2531-4f77-9d13-74339e64333e",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Volatility Threshold Quantile 0.75, Volatility Threshold: 0.020819494379046247\n",
+      "Preview of the first few rows of the filtered DataFrame based on EWMA volatility threshold:\n",
+      "Price       Date        Open        High         Low       Close      Volume  \\\n",
+      "750   2018-04-24  133.066493  133.066493  126.873912  129.606125  13958994.0   \n",
+      "751   2018-04-25  129.586800  130.005649  126.951240  128.130478   7421658.0   \n",
+      "752   2018-04-26  128.027407  128.639576  126.409988  127.002823   4932663.0   \n",
+      "921   2018-12-27  120.670680  125.405441  120.262959  125.405441   3359564.0   \n",
+      "926   2019-01-04  122.807950  126.247230  122.334463  125.813202   3582140.0   \n",
+      "\n",
+      "Price    Return  Volatility Ticker  Adj Close  EWMA_Volatility  \n",
+      "750   -0.068325    0.020710    MMM        NaN         0.022209  \n",
+      "751   -0.011386    0.020726    MMM        NaN         0.021525  \n",
+      "752   -0.008801    0.020679    MMM        NaN         0.020829  \n",
+      "921    0.023837    0.019292    MMM        NaN         0.020960  \n",
+      "926    0.041140    0.020327    MMM        NaN         0.022849  \n",
+      "\n",
+      "Preview of the last few rows of the filtered DataFrame:\n",
+      "Price         Date        Open        High         Low       Close     Volume  \\\n",
+      "1212845 2024-05-08  165.788278  166.205029  159.755282  163.644974  4673100.0   \n",
+      "1212846 2024-05-09  164.518166  167.088139  163.644965  166.830154  2145300.0   \n",
+      "1212847 2024-05-10  167.405688  168.675791  166.988922  167.733124  2010700.0   \n",
+      "1212848 2024-05-13  168.120084  170.233622  166.502697  166.611847  2125800.0   \n",
+      "1212850 2024-05-15  169.529117  173.637109  169.320734  171.940323  2585700.0   \n",
+      "\n",
+      "Price      Return  Volatility Ticker  Adj Close  EWMA_Volatility  \n",
+      "1212845 -0.020956    0.023770    ZTS        NaN         0.023062  \n",
+      "1212846  0.019464    0.023831    ZTS        NaN         0.022756  \n",
+      "1212847  0.005413    0.023839    ZTS        NaN         0.022021  \n",
+      "1212848 -0.006685    0.023746    ZTS        NaN         0.021430  \n",
+      "1212850  0.026115    0.023927    ZTS        NaN         0.020923  \n"
+     ]
+    }
+   ],
+   "source": [
+    "# Using EWMA volatility with 0.94 lambda and a 0.75 quantile thresholh to capture 30-day windows of stock analysis\n",
+    "def EWMA(df, lambda_=0.94, threshold_quantile=0.75):\n",
+    "    df['EWMA_Volatility'] = df['Return'].ewm(span=30, adjust=False).std()\n",
+    "    \n",
+    "    volatility_threshold = df['EWMA_Volatility'].quantile(threshold_quantile)\n",
+    "    print(f\"Volatility Threshold Quantile {threshold_quantile}, Volatility Threshold: {volatility_threshold}\")\n",
+    "    filtered_df = df[df['EWMA_Volatility'] >= volatility_threshold]\n",
+    "    \n",
+    "    return filtered_df\n",
+    "\n",
+    "# applying EWMA function to df_stocks and saving the filtered data as df_stockhistory\n",
+    "df_stockhistory = EWMA(df_stocks)\n",
+    "\n",
+    "# show first and last few rows\n",
+    "print(\"Preview of the first few rows of the filtered DataFrame based on EWMA volatility threshold:\")\n",
+    "print(df_stockhistory.head())\n",
+    "print(\"\\nPreview of the last few rows of the filtered DataFrame:\")\n",
+    "print(df_stockhistory.tail())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "id": "6e0ddd95-dcb1-41b8-bde6-c64bdde87046",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "(303265, 11)"
+      ]
+     },
+     "execution_count": 13,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "df_stockhistory.shape"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "id": "94e5d616-6cc5-48a1-b944-2de7a29c3773",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th>Price</th>\n",
+       "      <th>Date</th>\n",
+       "      <th>Open</th>\n",
+       "      <th>High</th>\n",
+       "      <th>Low</th>\n",
+       "      <th>Close</th>\n",
+       "      <th>Volume</th>\n",
+       "      <th>Return</th>\n",
+       "      <th>Volatility</th>\n",
+       "      <th>Ticker</th>\n",
+       "      <th>EWMA_Volatility</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>750</th>\n",
+       "      <td>2018-04-24</td>\n",
+       "      <td>133.066493</td>\n",
+       "      <td>133.066493</td>\n",
+       "      <td>126.873912</td>\n",
+       "      <td>129.606125</td>\n",
+       "      <td>13958994.0</td>\n",
+       "      <td>-0.068325</td>\n",
+       "      <td>0.020710</td>\n",
+       "      <td>MMM</td>\n",
+       "      <td>0.022209</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>751</th>\n",
+       "      <td>2018-04-25</td>\n",
+       "      <td>129.586800</td>\n",
+       "      <td>130.005649</td>\n",
+       "      <td>126.951240</td>\n",
+       "      <td>128.130478</td>\n",
+       "      <td>7421658.0</td>\n",
+       "      <td>-0.011386</td>\n",
+       "      <td>0.020726</td>\n",
+       "      <td>MMM</td>\n",
+       "      <td>0.021525</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>752</th>\n",
+       "      <td>2018-04-26</td>\n",
+       "      <td>128.027407</td>\n",
+       "      <td>128.639576</td>\n",
+       "      <td>126.409988</td>\n",
+       "      <td>127.002823</td>\n",
+       "      <td>4932663.0</td>\n",
+       "      <td>-0.008801</td>\n",
+       "      <td>0.020679</td>\n",
+       "      <td>MMM</td>\n",
+       "      <td>0.020829</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>921</th>\n",
+       "      <td>2018-12-27</td>\n",
+       "      <td>120.670680</td>\n",
+       "      <td>125.405441</td>\n",
+       "      <td>120.262959</td>\n",
+       "      <td>125.405441</td>\n",
+       "      <td>3359564.0</td>\n",
+       "      <td>0.023837</td>\n",
+       "      <td>0.019292</td>\n",
+       "      <td>MMM</td>\n",
+       "      <td>0.020960</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>926</th>\n",
+       "      <td>2019-01-04</td>\n",
+       "      <td>122.807950</td>\n",
+       "      <td>126.247230</td>\n",
+       "      <td>122.334463</td>\n",
+       "      <td>125.813202</td>\n",
+       "      <td>3582140.0</td>\n",
+       "      <td>0.041140</td>\n",
+       "      <td>0.020327</td>\n",
+       "      <td>MMM</td>\n",
+       "      <td>0.022849</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>...</th>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1212845</th>\n",
+       "      <td>2024-05-08</td>\n",
+       "      <td>165.788278</td>\n",
+       "      <td>166.205029</td>\n",
+       "      <td>159.755282</td>\n",
+       "      <td>163.644974</td>\n",
+       "      <td>4673100.0</td>\n",
+       "      <td>-0.020956</td>\n",
+       "      <td>0.023770</td>\n",
+       "      <td>ZTS</td>\n",
+       "      <td>0.023062</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1212846</th>\n",
+       "      <td>2024-05-09</td>\n",
+       "      <td>164.518166</td>\n",
+       "      <td>167.088139</td>\n",
+       "      <td>163.644965</td>\n",
+       "      <td>166.830154</td>\n",
+       "      <td>2145300.0</td>\n",
+       "      <td>0.019464</td>\n",
+       "      <td>0.023831</td>\n",
+       "      <td>ZTS</td>\n",
+       "      <td>0.022756</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1212847</th>\n",
+       "      <td>2024-05-10</td>\n",
+       "      <td>167.405688</td>\n",
+       "      <td>168.675791</td>\n",
+       "      <td>166.988922</td>\n",
+       "      <td>167.733124</td>\n",
+       "      <td>2010700.0</td>\n",
+       "      <td>0.005413</td>\n",
+       "      <td>0.023839</td>\n",
+       "      <td>ZTS</td>\n",
+       "      <td>0.022021</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1212848</th>\n",
+       "      <td>2024-05-13</td>\n",
+       "      <td>168.120084</td>\n",
+       "      <td>170.233622</td>\n",
+       "      <td>166.502697</td>\n",
+       "      <td>166.611847</td>\n",
+       "      <td>2125800.0</td>\n",
+       "      <td>-0.006685</td>\n",
+       "      <td>0.023746</td>\n",
+       "      <td>ZTS</td>\n",
+       "      <td>0.021430</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1212850</th>\n",
+       "      <td>2024-05-15</td>\n",
+       "      <td>169.529117</td>\n",
+       "      <td>173.637109</td>\n",
+       "      <td>169.320734</td>\n",
+       "      <td>171.940323</td>\n",
+       "      <td>2585700.0</td>\n",
+       "      <td>0.026115</td>\n",
+       "      <td>0.023927</td>\n",
+       "      <td>ZTS</td>\n",
+       "      <td>0.020923</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "<p>303265 rows × 10 columns</p>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "Price         Date        Open        High         Low       Close  \\\n",
+       "750     2018-04-24  133.066493  133.066493  126.873912  129.606125   \n",
+       "751     2018-04-25  129.586800  130.005649  126.951240  128.130478   \n",
+       "752     2018-04-26  128.027407  128.639576  126.409988  127.002823   \n",
+       "921     2018-12-27  120.670680  125.405441  120.262959  125.405441   \n",
+       "926     2019-01-04  122.807950  126.247230  122.334463  125.813202   \n",
+       "...            ...         ...         ...         ...         ...   \n",
+       "1212845 2024-05-08  165.788278  166.205029  159.755282  163.644974   \n",
+       "1212846 2024-05-09  164.518166  167.088139  163.644965  166.830154   \n",
+       "1212847 2024-05-10  167.405688  168.675791  166.988922  167.733124   \n",
+       "1212848 2024-05-13  168.120084  170.233622  166.502697  166.611847   \n",
+       "1212850 2024-05-15  169.529117  173.637109  169.320734  171.940323   \n",
+       "\n",
+       "Price        Volume    Return  Volatility Ticker  EWMA_Volatility  \n",
+       "750      13958994.0 -0.068325    0.020710    MMM         0.022209  \n",
+       "751       7421658.0 -0.011386    0.020726    MMM         0.021525  \n",
+       "752       4932663.0 -0.008801    0.020679    MMM         0.020829  \n",
+       "921       3359564.0  0.023837    0.019292    MMM         0.020960  \n",
+       "926       3582140.0  0.041140    0.020327    MMM         0.022849  \n",
+       "...             ...       ...         ...    ...              ...  \n",
+       "1212845   4673100.0 -0.020956    0.023770    ZTS         0.023062  \n",
+       "1212846   2145300.0  0.019464    0.023831    ZTS         0.022756  \n",
+       "1212847   2010700.0  0.005413    0.023839    ZTS         0.022021  \n",
+       "1212848   2125800.0 -0.006685    0.023746    ZTS         0.021430  \n",
+       "1212850   2585700.0  0.026115    0.023927    ZTS         0.020923  \n",
+       "\n",
+       "[303265 rows x 10 columns]"
+      ]
+     },
+     "execution_count": 15,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# Dropping \"Adj Close\" variable because we collected no data, no reason to suspect we need it for our analysis\n",
+    "df_stockhistory.drop(columns=['Adj Close'])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 21,
+   "id": "a59ece37-e88d-4995-bcc2-2de5c3d4eb04",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Data saved as: 'df_stockhistory.csv'\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Save data to CSV with UTF-8 encoding (otherwise receive errors)\n",
+    "df_stockhistory.to_csv(\"df_stockhistory.csv\", index=False, encoding='utf-8-sig')\n",
+    "\n",
+    "print(\"Data saved as: 'df_stockhistory.csv'\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "bf640deb-fd85-4655-8e21-5d7b13829314",
+   "metadata": {},
+   "source": [
+    "Added stock \"Name\" variable using an online source and mapping each ticker to their correponding name in separate code."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python [conda env:base] *",
+   "language": "python",
+   "name": "conda-base-py"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.12.9"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
